@@ -15,6 +15,9 @@
  */
 package com.alibaba.csp.sentinel.dashboard.controller;
 
+import com.alibaba.csp.sentinel.dashboard.repository.rule.InMemoryRuleRepositoryAdapter;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRuleProvider;
+import com.alibaba.csp.sentinel.dashboard.rule.DynamicRulePublisher;
 import java.util.Date;
 import java.util.List;
 
@@ -23,17 +26,16 @@ import javax.servlet.http.HttpServletRequest;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService.AuthUser;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService.PrivilegeType;
-import com.alibaba.csp.sentinel.dashboard.repository.rule.RuleRepository;
 import com.alibaba.csp.sentinel.util.StringUtil;
 
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.SystemRuleEntity;
-import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
 import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
 import com.alibaba.csp.sentinel.dashboard.domain.Result;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -47,8 +49,16 @@ public class SystemController {
 
     private final Logger logger = LoggerFactory.getLogger(SystemController.class);
 
+    //引入动态数据源
     @Autowired
-    private RuleRepository<SystemRuleEntity, Long> repository;
+    private InMemoryRuleRepositoryAdapter<SystemRuleEntity> repository;
+    @Autowired
+    @Qualifier("systemRuleApolloProvider")
+    private DynamicRuleProvider<List<SystemRuleEntity>> ruleProvider;
+    @Autowired
+    @Qualifier("systemRuleApolloPublisher")
+    private DynamicRulePublisher<List<SystemRuleEntity>> rulePublisher;
+
     @Autowired
     private SentinelApiClient sentinelApiClient;
     @Autowired
@@ -81,7 +91,13 @@ public class SystemController {
             return checkResult;
         }
         try {
-            List<SystemRuleEntity> rules = sentinelApiClient.fetchSystemRuleOfMachine(app, ip, port);
+            //改成动态数据源
+            List<SystemRuleEntity> rules = ruleProvider.getRules(app);
+            if (rules != null && !rules.isEmpty()) {
+                for (SystemRuleEntity entity : rules) {
+                    entity.setApp(app);
+                }
+            }
             rules = repository.saveAll(rules);
             return Result.ofSuccess(rules);
         } catch (Throwable throwable) {
@@ -157,12 +173,11 @@ public class SystemController {
         entity.setGmtModified(date);
         try {
             entity = repository.save(entity);
+            //添加永久存储
+            publishRules(app);
         } catch (Throwable throwable) {
             logger.error("Add SystemRule error", throwable);
             return Result.ofThrowable(-1, throwable);
-        }
-        if (!publishRules(app, ip, port)) {
-            logger.warn("Publish system rules fail after rule add");
         }
         return Result.ofSuccess(entity);
     }
@@ -220,12 +235,11 @@ public class SystemController {
         entity.setGmtModified(date);
         try {
             entity = repository.save(entity);
+            //添加永久存储
+            publishRules(app);
         } catch (Throwable throwable) {
             logger.error("save error:", throwable);
             return Result.ofThrowable(-1, throwable);
-        }
-        if (!publishRules(entity.getApp(), entity.getIp(), entity.getPort())) {
-            logger.info("publish system rules fail after rule update");
         }
         return Result.ofSuccess(entity);
     }
@@ -243,18 +257,18 @@ public class SystemController {
         authUser.authTarget(oldEntity.getApp(), PrivilegeType.DELETE_RULE);
         try {
             repository.delete(id);
+            //添加永久存储
+            publishRules(oldEntity.getApp());
         } catch (Throwable throwable) {
             logger.error("delete error:", throwable);
             return Result.ofThrowable(-1, throwable);
         }
-        if (!publishRules(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort())) {
-            logger.info("publish system rules fail after rule delete");
-        }
         return Result.ofSuccess(id);
     }
 
-    private boolean publishRules(String app, String ip, Integer port) {
-        List<SystemRuleEntity> rules = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.setSystemRuleOfMachine(app, ip, port, rules);
+    //改造
+    private void publishRules(String app) throws Exception {
+        List<SystemRuleEntity> rules = repository.findAllByApp(app);
+        rulePublisher.publish(app, rules);
     }
 }

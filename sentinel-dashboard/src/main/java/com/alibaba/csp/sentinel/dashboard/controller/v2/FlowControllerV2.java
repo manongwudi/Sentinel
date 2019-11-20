@@ -60,11 +60,12 @@ public class FlowControllerV2 {
     @Autowired
     private InMemoryRuleRepositoryAdapter<FlowRuleEntity> repository;
 
+    //替换为Apollo数据源
     @Autowired
-    @Qualifier("flowRuleDefaultProvider")
+    @Qualifier("flowRuleApolloProvider")
     private DynamicRuleProvider<List<FlowRuleEntity>> ruleProvider;
     @Autowired
-    @Qualifier("flowRuleDefaultPublisher")
+    @Qualifier("flowRuleApolloPublisher")
     private DynamicRulePublisher<List<FlowRuleEntity>> rulePublisher;
 
     @Autowired
@@ -167,8 +168,8 @@ public class FlowControllerV2 {
 
     @PutMapping("/rule/{id}")
     public Result<FlowRuleEntity> apiUpdateFlowRule(HttpServletRequest request,
-                                                    @PathVariable("id") Long id,
-                                                    @RequestBody FlowRuleEntity entity) {
+            @PathVariable("id") Long id,
+            @RequestBody FlowRuleEntity entity) {
         AuthUser authUser = authService.getAuthUser(request);
         if (id == null || id <= 0) {
             return Result.ofFail(-1, "Invalid id");
